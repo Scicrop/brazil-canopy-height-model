@@ -7,7 +7,7 @@ Here we present two ways how to install the packages.
 ### A) With pip in a virtual environment
 
 1. Install [GDAL](https://gdal.org/). For Ubuntu follow e.g. these [instructions](https://mothergeo-py.readthedocs.io/en/latest/development/how-to/gdal-ubuntu-pkg.html).
-2. Create a new [virtual environment](https://packaging.python.org/en/latest/guides/installing-using-pip-and-virtual-environments/) called `gchm` by running: `python -m venv $HOME/venvs/gchm`
+2. Create a new [virtual environment](https://packaging.python.org/en/latest/guides/installing-using-pip-and-virtual-environments/) called `gchm` by running: `python3 -m venv $HOME/venvs/gchm`
 3. Activate the environment:`source $HOME/venvs/gchm/bin/activate`. (Check that python points to the new environment with `which python3`.)
 4. Install pytorch by following the instructions on [pytorch.org](https://pytorch.org/) that match your versions. Run e.g. `python3 -m pip install torch torchvision torchaudio`
 5. Install the GDAL python API matching the installed GDAL version: `python3 -m pip install GDAL==3.5.3`

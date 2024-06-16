@@ -13,3 +13,4 @@ typing
 scikit-learn
 wandb
 tensorboard
+python-decouple

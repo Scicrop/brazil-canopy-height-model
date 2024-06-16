@@ -26,14 +26,16 @@ def sort_band_arrays(band_arrays, channels_last=True):
 
 
 def read_band(path_band, num_retries=10, max_sleep_sec=5):
+    print("path_band:", path_band)
     for i in range(num_retries):
         try:
             ds = gdal.Open(path_band)
             band = ds.GetRasterBand(1)
-            print('reading full band array...')
+            print(f'reading full band array from {path_band}')
             band_array = band.ReadAsArray()
             return band_array
-        except:
+        except Exception as e:
+            print(e)
             print('Attempt {}/{} failed reading path: {}'.format(i, num_retries, path_band))
             time.sleep(np.random.randint(max_sleep_sec))
             continue
@@ -69,10 +71,22 @@ def read_sentinel2_bands(data_path, from_aws=False, bucket='sentinel-s2-l2a', ch
                 # get path to IMG_DATA
                 path_img_data = \
                 [name for name in archive.namelist() if name.endswith('{}_{}m.jp2'.format(band_name, res))][0]
-                path_band = os.path.join(data_path, path_img_data)
-                path_band = '/vsizip/' + path_band
+                data_path = data_path.replace('.zip', '')
 
-            print('path_band: ', path_band)
+                partial = data_path.split("/")
+                partial = partial[len(partial)-1]
+                print("partial:",partial)
+
+                print("data_path:", data_path)
+
+                if partial in path_img_data:
+                    path_img_data = path_img_data.replace(partial,'')
+                print('path_img_data:', path_img_data)
+
+
+                path_band = data_path + path_img_data
+                path_band = '' + path_band
+                print('path_band: ', path_band)
             if not tile_info:
                 ds = gdal.Open(path_band)
                 tile_info = get_tile_info(ds)
@@ -86,8 +100,13 @@ def read_sentinel2_bands(data_path, from_aws=False, bucket='sentinel-s2-l2a', ch
     else:
         path_img_data = \
         [name for name in archive.namelist() if name.endswith('CLD_20m.jp2') or name.endswith('MSK_CLDPRB_20m.jp2')][0]
-        path_band = os.path.join(data_path, path_img_data)
-        path_band = '/vsizip/' + path_band
+        data_path = data_path.replace('.zip', '')
+        partial = data_path.split("/")
+        partial = partial[len(partial) - 1]
+        if partial in path_img_data:
+            path_img_data = path_img_data.replace(partial, '')
+        path_band = data_path+path_img_data
+        path_band = '' + path_band
     print('cloud path_band:', path_band)
 
     band_arrays['CLD'] = read_band(path_band=path_band)
