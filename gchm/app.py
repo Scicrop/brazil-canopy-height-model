@@ -1,7 +1,11 @@
 import argparse
+import json
 import os
 import datetime
+import venv
 import zipfile
+from pathlib import Path
+
 import requests
 from tqdm import tqdm
 from decouple import config
@@ -56,7 +60,8 @@ def get_available_sentinel_products(aoi, start_date, end_date):
     data_collection = "SENTINEL-2"
     json = requests.get(
         f"https://catalogue.dataspace.copernicus.eu/odata/v1/Products?$filter=Collection/Name eq '{data_collection}' and OData.CSC.Intersects(area=geography'SRID=4326;{aoi}') and ContentDate/Start gt {start_date}T00:00:00.000Z and ContentDate/Start lt {end_date}T00:00:00.000Z "
-        f"and Attributes/OData.CSC.DoubleAttribute/any(att:att/Name eq 'cloudCover' and att/OData.CSC.DoubleAttribute/Value le 1.00)"
+        f"and Attributes/OData.CSC.DoubleAttribute/any(att:att/Name eq 'cloudCover' and att/OData.CSC.DoubleAttribute/Value le 1.00) "
+        f"and contains(Name%2C%27L2A%27)"
     )
     return json.json()
 
@@ -124,18 +129,22 @@ def get_access_token(username: str, password: str) -> str:
 
 def run_canopy_prediction(image_path):
     DEPLOY_IMAGE_PATH = image_path
-    GCHM_DEPLOY_DIR = "./deploy_example/predictions/"
-    GCHM_MODEL_DIR = "./trained_models/GLOBAL_GEDI_2019_2020"
+    GCHM_DEPLOY_DIR = "../deploy_example/predictions/"
+    GCHM_MODEL_DIR = "../trained_models/GLOBAL_GEDI_2019_2020"
     GCHM_NUM_MODELS = "5"
-    filepath_failed_image_paths = "./deploy_example/log_failed.txt"
+    filepath_failed_image_paths = "../deploy_example/log_failed.txt"
     GCHM_DOWNLOAD_FROM_AWS = "False"
-    GCHM_DEPLOY_SENTINEL2_AWS_DIR = "./deploy_example/sentinel2_aws"
+    GCHM_DEPLOY_SENTINEL2_AWS_DIR = "../deploy_example/sentinel2_aws"
 
     os.makedirs(GCHM_DEPLOY_DIR, exist_ok=True)
     os.makedirs(GCHM_DEPLOY_SENTINEL2_AWS_DIR, exist_ok=True)
 
+    home_dir = os.path.expanduser("~")
+    venv_python = os.path.join(home_dir, "venvs/brchm/bin/python")
+
+
     command = [
-        "python3", "gchm/deploy.py",
+        venv_python, "deploy.py",
         "--model_dir", GCHM_MODEL_DIR,
         "--deploy_image_path", DEPLOY_IMAGE_PATH,
         "--deploy_dir", GCHM_DEPLOY_DIR,
@@ -153,13 +162,13 @@ def run_canopy_prediction(image_path):
 
 
 def run_merge_predictions(tile_name):
-    GCHM_DEPLOY_DIR = "./deploy_example/predictions/"
+    GCHM_DEPLOY_DIR = "../deploy_example/predictions"
     reduction = "inv_var_mean"
     out_dir = f"{GCHM_DEPLOY_DIR}_merge/preds_{reduction}/"
     out_type = "uint8"
     nodata_value = 255
     from_aws = False
-    finetune_strategy = "sua_estrategia_de_finetune"  # Substitua com o valor apropriado
+    finetune_strategy = "FT_Lm_SRCB"
     os.makedirs(out_dir, exist_ok=True)
 
     print("*************************************")
@@ -170,7 +179,7 @@ def run_merge_predictions(tile_name):
     # Executando o script Python
     command = [
         "python3",
-        "gchm/merge_predictions_tile.py",
+        "merge_predictions_tile.py",
         f"--tile_name={tile_name}",
         f"--out_dir={out_dir}",
         f"--deploy_dir={GCHM_DEPLOY_DIR}",
@@ -195,22 +204,31 @@ def main(car):
     start_date_str = start_date.strftime("%Y-%m-%d")
     print("start_date:", start_date_str)
     print("end_date:", end_date_str)
-    output_path = './deploy_example/sentinel2/'
+    output_path = '../deploy_example/sentinel2/'
 
-    json = car_to_geojson(car, api_root, api_token)
-    wkt = geojson_to_wkt_bbox(json)
-    json = get_available_sentinel_products(wkt, start_date_str, end_date_str)
+    json_data = car_to_geojson(car, api_root, api_token)
+    with open('/tmp/aoi.json', 'w') as f:
+        json.dump(json_data, f, indent=4)
+    wkt = geojson_to_wkt_bbox(json_data)
+    json_data = get_available_sentinel_products(wkt, start_date_str, end_date_str)
 
-    if json is not None and len(json['value']) > 0:
-        for item in json['value']:
-            print(item['Name'], item['OriginDate'])
-        print(f"Starting to download file {json['value'][0]['Name']}.")
-        image_path = output_path + json['value'][0]['Name'] + ".zip"
-        tile = json['value'][0]['Name'].split('_T')[1].split('_')[0]
+    if json_data is not None and len(json_data['value']) > 0:
+        tile = json_data['value'][0]['Name'].split('_T')[1].split('_')[0]
         print(tile)
-        #download_sentinel_product(json['value'][0]['Id'], copernicus_dataspace_login, copernicus_dataspace_passwd, image_path)
-        #unzip_file(image_path, output_path)
-        #run_canopy_prediction(image_path)
+        for item in json_data['value']:
+            image_path = output_path + json_data['value'][0]['Name'] + ".zip"
+            print(f"Starting to download file {json_data['value'][0]['Name']} at {image_path}.")
+            file_path = Path(image_path)
+            dir_path = Path(output_path+json_data['value'][0]['Name'])
+            if not dir_path.is_dir() or not file_path.is_file():
+                download_sentinel_product(json_data['value'][0]['Id'], copernicus_dataspace_login, copernicus_dataspace_passwd, image_path)
+                unzip_file(image_path, output_path)
+            else:
+                print('Product already downloaded.')
+            run_canopy_prediction(image_path)
+        run_merge_predictions(tile)
+        merged_predictions_file_path = output_path + 'predictions_merge/preds_inv_var_mean/' + tile + '_pref.tif'
+        print(merged_predictions_file_path)
     else:
         print("No sentinel products found for this period/aoi/cloud cover.")
 

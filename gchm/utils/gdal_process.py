@@ -75,18 +75,13 @@ def read_sentinel2_bands(data_path, from_aws=False, bucket='sentinel-s2-l2a', ch
 
                 partial = data_path.split("/")
                 partial = partial[len(partial)-1]
-                print("partial:",partial)
-
-                print("data_path:", data_path)
 
                 if partial in path_img_data:
                     path_img_data = path_img_data.replace(partial,'')
                 print('path_img_data:', path_img_data)
-
-
                 path_band = data_path + path_img_data
                 path_band = '' + path_band
-                print('path_band: ', path_band)
+
             if not tile_info:
                 ds = gdal.Open(path_band)
                 tile_info = get_tile_info(ds)

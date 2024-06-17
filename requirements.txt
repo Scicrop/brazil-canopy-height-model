@@ -14,3 +14,4 @@ scikit-learn
 wandb
 tensorboard
 python-decouple
+boto3
