@@ -5,13 +5,18 @@ import datetime
 import venv
 import zipfile
 from pathlib import Path
-
+import matplotlib.pyplot as plt
+import numpy as np
+import rasterio
 import requests
+from pyproj import Proj
 from tqdm import tqdm
 from decouple import config
 from datetime import datetime, timedelta
 import os
 import subprocess
+import geopandas as gpd
+from shapely.geometry import shape
 
 
 def unzip_file(zip_file_path, extract_to_dir):
@@ -193,6 +198,110 @@ def run_merge_predictions(tile_name):
     subprocess.run(command)
 
 
+def plot_pixel_distribution(file_path):
+    # Abra o arquivo GeoTIFF
+    with rasterio.open(file_path) as src:
+        # Leia a primeira banda
+        band1 = src.read(1)
+
+        # Exclua os valores 255
+        valid_pixels = band1[band1 != 255]
+
+        # Plote o histograma dos valores dos pixels
+        plt.figure(figsize=(10, 6))
+        plt.hist(valid_pixels, bins=50, color='blue', edgecolor='black')
+        plt.title('Distribuição dos Valores dos Pixels (excluindo 255)')
+        plt.xlabel('Valor do Pixel')
+        plt.ylabel('Frequência')
+        plt.grid(True)
+        plt.show()
+
+
+def plot_tiff(file_path, gdf):
+    with rasterio.open(file_path) as src:
+        num_bands = src.count
+        print(f"O arquivo TIFF possui {num_bands} bandas.")
+
+        # Leia a primeira banda
+        band1 = src.read(1)
+
+        # Obtenha o CRS do GeoTIFF
+        tiff_crs = src.crs
+        print(f"CRS do TIFF: {tiff_crs}")
+
+        # Verifique se o GeoDataFrame está no mesmo CRS do TIFF (EPSG:32722)
+        if gdf.crs != tiff_crs:
+            print("Reprojecionando GeoDataFrame para CRS do TIFF...")
+            gdf = gdf.to_crs(tiff_crs)
+
+        # Mascarar valores iguais a 255
+        masked_band1 = np.ma.masked_equal(band1, 255)
+
+        # Configura a figura e o eixo
+        fig, ax = plt.subplots(figsize=(10, 10))
+
+        # Obter a extensão do raster
+        raster_extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
+
+        # Exiba a imagem com uma paleta de cores diferente e valores 255 mascarados
+        im = ax.imshow(masked_band1, cmap='viridis', extent=raster_extent)  # Usar extent para alinhar corretamente
+
+        # Converter as coordenadas do GeoDataFrame para o sistema de coordenadas do raster
+        if gdf.crs != tiff_crs:
+            proj_in = Proj(gdf.crs)
+            proj_out = Proj(tiff_crs)
+            gdf['geometry'] = gdf['geometry'].to_crs(proj_out)
+
+        # Plote o GeoDataFrame no eixo
+        gdf.plot(ax=ax, facecolor='none', edgecolor='red')
+
+        # Adicione uma barra de cores
+        cbar = plt.colorbar(im, ax=ax, label='Valores de pixel')
+
+        # Adicione título e rótulos
+        plt.title('Imagem GeoTIFF com Valores 255 Mascarados')
+        plt.xlabel('X')
+        plt.ylabel('Y')
+
+        # Exiba a plotagem
+        plt.show()
+
+
+def normalize_band(band, max_value):
+    # Excluir valores 255
+    mask = band != 255
+    valid_pixels = band[mask]
+
+    # Normalizar os valores dos pixels
+    max_pixel_value = valid_pixels.max()
+
+    normalized_pixels = (valid_pixels / max_pixel_value) * max_value
+
+    # Criar uma cópia da banda original
+    new_band = band.copy()
+
+    # Aplicar os valores normalizados aos pixels válidos
+    new_band[mask] = normalized_pixels
+
+    return new_band
+
+
+def create_normalized_tiff(input_file, output_file, max_value=20):
+    # Abra o arquivo GeoTIFF original
+    with rasterio.open(input_file) as src:
+        # Leia a primeira banda
+        band1 = src.read(1)
+
+        # Normalize os valores da banda
+        normalized_band = normalize_band(band1, max_value=max_value)
+
+        # Crie um novo arquivo GeoTIFF com os valores normalizados
+        profile = src.profile
+        with rasterio.open(output_file, 'w', **profile) as dst:
+            dst.write(normalized_band, 1)
+
+
+
 def main(car):
     api_root = 'https://api.scicrop.com.br'
     api_token = config('TOKEN')
@@ -207,6 +316,7 @@ def main(car):
     output_path = '../deploy_example/sentinel2/'
 
     json_data = car_to_geojson(car, api_root, api_token)
+    geometry = shape(json_data)
     with open('/tmp/aoi.json', 'w') as f:
         json.dump(json_data, f, indent=4)
     wkt = geojson_to_wkt_bbox(json_data)
@@ -220,6 +330,7 @@ def main(car):
             print(f"Starting to download file {json_data['value'][0]['Name']} at {image_path}.")
             file_path = Path(image_path)
             dir_path = Path(output_path+json_data['value'][0]['Name'])
+            '''
             if not dir_path.is_dir() or not file_path.is_file():
                 download_sentinel_product(json_data['value'][0]['Id'], copernicus_dataspace_login, copernicus_dataspace_passwd, image_path)
                 unzip_file(image_path, output_path)
@@ -227,8 +338,19 @@ def main(car):
                 print('Product already downloaded.')
             run_canopy_prediction(image_path)
         run_merge_predictions(tile)
-        merged_predictions_file_path = output_path + 'predictions_merge/preds_inv_var_mean/' + tile + '_pref.tif'
-        print(merged_predictions_file_path)
+        '''
+        merged_predictions_file_path = '../deploy_example/predictions_merge/preds_inv_var_mean/' + tile + '_pred.tif'
+
+        gdf = gpd.GeoDataFrame([{'geometry': geometry}], crs="EPSG:4326")
+
+        plot_tiff(merged_predictions_file_path, gdf)
+        plot_pixel_distribution(merged_predictions_file_path)
+        output_file = '/tmp/arquivo_normalizado.tif'
+        create_normalized_tiff(merged_predictions_file_path, output_file)
+        plot_tiff(output_file, gdf)
+        plot_pixel_distribution(output_file)
+
+
     else:
         print("No sentinel products found for this period/aoi/cloud cover.")
 
