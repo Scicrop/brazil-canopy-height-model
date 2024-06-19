@@ -13,15 +13,13 @@ import botocore
 import urllib3
 
 from gchm.models.architectures import Architectures
+from gchm.utils.gpu_helper import list_gpus
 from gchm.utils.transforms import Normalize, NormalizeVariance, denormalize
 from gchm.datasets.dataset_sentinel2_deploy import Sentinel2Deploy
 from gchm.utils.gdal_process import save_array_as_geotif
 from gchm.utils.parser import load_args_from_json, str2bool, str_or_none
 from gchm.utils.aws import download_and_zip_safe_from_aws
 
-
-DEVICE = torch.device("cuda:0")
-print('DEVICE: ', DEVICE, torch.cuda.get_device_name(0))
 gdal.UseExceptions()
 
 
@@ -73,6 +71,12 @@ def predict(model, args, model_weights=None,
 
     # load best model weights
     model.load_state_dict(model_weights)
+
+    device_ids = list_gpus()
+    model = model.to('cuda:0')
+    model = torch.nn.DataParallel(model, device_ids=device_ids)
+
+
     model.eval()
 
     # init predictions and estimated standard deviations
@@ -85,7 +89,7 @@ def predict(model, args, model_weights=None,
         for step, data_dict in enumerate(tqdm(dl_pred, ncols=100, desc='pred', file=sys.stdout)):  # for each training step
 
             inputs = data_dict[args.input_key]
-            inputs = inputs.to(DEVICE, non_blocking=True)
+            inputs = inputs.to('cuda', non_blocking=True)
 
             if args.return_variance:
                 predictions, variances = model.forward(inputs)
@@ -240,6 +244,7 @@ if __name__ == "__main__":
     # load model architecture
     architecture_collection = Architectures(args=args)
     net = architecture_collection(args.architecture)(num_outputs=1)
+
 
     net.cuda()  # move model to GPU
 

@@ -336,9 +336,10 @@ def main(car):
                 unzip_file(image_path, output_path)
             else:
                 print('Product already downloaded.')
+            '''
             run_canopy_prediction(image_path)
         run_merge_predictions(tile)
-        '''
+
         merged_predictions_file_path = '../deploy_example/predictions_merge/preds_inv_var_mean/' + tile + '_pred.tif'
 
         gdf = gpd.GeoDataFrame([{'geometry': geometry}], crs="EPSG:4326")
