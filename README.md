@@ -4,6 +4,10 @@ This repository is a fork of https://github.com/langnico/global-canopy-height-mo
 Here, we developed a model to estimate canopy top height anywhere on Earth. The model estimates canopy top height for every Sentinel-2 image pixel and was trained using sparse GEDI LIDAR data as a reference.
 In this fork with we fixed some small bugs, added some automation for canopy estimation in Brazil biomes. Now you can choose the AOI of the place you want to predict the canopy height. Also we added GPU parallelization support for the inference.
 
+
+https://github.com/Scicrop/brazil-canopy-height-model/assets/692043/54c807f6-cb92-4d3b-bab5-706c1a4b6a6e
+
+
 ## Table of Contents
 1. [Data availability](https://github.com/langnico/global-canopy-height-model#data-availability)
 2. [Installation and credentials](https://github.com/langnico/global-canopy-height-model#installation-and-credentials)
