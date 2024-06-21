@@ -17,3 +17,4 @@ python-decouple
 boto3
 geopandas
 rasterio
+jsonschema

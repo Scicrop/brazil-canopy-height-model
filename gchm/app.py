@@ -1,8 +1,7 @@
 import argparse
 import json
-import os
 import datetime
-import venv
+import sys
 import zipfile
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -10,6 +9,7 @@ import numpy as np
 import rasterio
 import requests
 from pyproj import Proj
+from sentinelhub import SentinelHubRequest, DataCollection, MimeType, bbox_to_dimensions, BBox, CRS
 from tqdm import tqdm
 from decouple import config
 from datetime import datetime, timedelta
@@ -17,19 +17,16 @@ import os
 import subprocess
 import geopandas as gpd
 from shapely.geometry import shape
+from jsonschema import validate, ValidationError
+from typing import Any
+import matplotlib.pyplot as plt
+import numpy as np
+
+from gchm.utils.prepare import prepare, check_env
 
 
 def unzip_file(zip_file_path, extract_to_dir):
-    """
-    Unzips a file into a specific directory.
-
-    :param zip_file_path: Path to the zip file.
-    :param extract_to_dir: Directory to extract the contents to.
-    """
-    # Ensure the extraction directory exists
     os.makedirs(extract_to_dir, exist_ok=True)
-
-    # Open the zip file and extract all contents
     with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
         zip_ref.extractall(extract_to_dir)
     print(f"Unzipped {zip_file_path} to {extract_to_dir}")
@@ -71,13 +68,12 @@ def get_available_sentinel_products(aoi, start_date, end_date):
     return json.json()
 
 
-def geojson_to_wkt_bbox(geojson):
+def geojson_to_bbox(geojson):
     if geojson['type'] != 'Polygon':
         raise ValueError("O GeoJSON fornecido não é um 'Polygon'")
 
-    coordinates = geojson['coordinates'][0]  # Assumindo que não há buracos no polígono
+    coordinates = geojson['coordinates'][0]
 
-    # Encontrando os limites do bounding box
     min_x = float('inf')
     min_y = float('inf')
     max_x = float('-inf')
@@ -93,11 +89,9 @@ def geojson_to_wkt_bbox(geojson):
         if y > max_y:
             max_y = y
 
-    # Criando a representação WKT do bounding box
-    wkt = f"POLYGON(({min_x} {min_y}, {min_x} {max_y}, {max_x} {max_y}, {max_x} {min_y}, {min_x} {min_y}))"
+    bbox = f"POLYGON(({min_x} {min_y}, {min_x} {max_y}, {max_x} {max_y}, {max_x} {min_y}, {min_x} {min_y}))"
 
-    return wkt
-
+    return bbox
 
 
 def car_to_geojson(car, api_root, api_token):
@@ -129,7 +123,6 @@ def get_access_token(username: str, password: str) -> str:
             f"Access token creation failed. Reponse from the server was: {r.json()}"
         )
     return r.json()["access_token"]
-
 
 
 def run_canopy_prediction(image_path):
@@ -199,165 +192,238 @@ def run_merge_predictions(tile_name):
 
 
 def plot_pixel_distribution(file_path):
-    # Abra o arquivo GeoTIFF
     with rasterio.open(file_path) as src:
-        # Leia a primeira banda
         band1 = src.read(1)
-
-        # Exclua os valores 255
         valid_pixels = band1[band1 != 255]
-
-        # Plote o histograma dos valores dos pixels
         plt.figure(figsize=(10, 6))
         plt.hist(valid_pixels, bins=50, color='blue', edgecolor='black')
-        plt.title('Distribuição dos Valores dos Pixels (excluindo 255)')
-        plt.xlabel('Valor do Pixel')
-        plt.ylabel('Frequência')
+        plt.title('Canopy Height by Pixel')
+        plt.xlabel('Canopy Height')
+        plt.ylabel('Frequency')
         plt.grid(True)
+        plt.show()
+
+
+def plot_tiff_rgb(file_path, gdf):
+    with rasterio.open(file_path) as src:
+        tiff_crs = src.crs
+        if gdf.crs != tiff_crs:
+            gdf = gdf.to_crs(tiff_crs)
+
+        red = src.read(1)
+        green = src.read(2)
+        blue = src.read(3)
+        rgb = np.dstack((red, green, blue))
+        def adjust_contrast(image, lower_percentile=2, upper_percentile=98, gamma=1.0):
+            lower = np.percentile(image, lower_percentile)
+            upper = np.percentile(image, upper_percentile)
+            image = np.clip(image, lower, upper)
+            image = (image - lower) / (upper - lower)
+            image = np.power(image, gamma)
+            return image
+
+        red_adjusted = adjust_contrast(red, gamma=0.8)
+        green_adjusted = adjust_contrast(green, gamma=0.8)
+        blue_adjusted = adjust_contrast(blue, gamma=0.8)
+
+        rgb_adjusted = np.dstack((red_adjusted, green_adjusted, blue_adjusted))
+
+        fig, ax = plt.subplots(figsize=(10, 10))
+        raster_extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
+        im = ax.imshow(rgb_adjusted, extent=raster_extent)
+        if gdf.crs != tiff_crs:
+            proj_out = Proj(tiff_crs)
+            gdf['geometry'] = gdf['geometry'].to_crs(proj_out)
+
+        gdf.plot(ax=ax, facecolor='none', edgecolor='red')
+
+
+        plt.title('Sentinel 2 Image (RGB)')
+        plt.axis('off')
         plt.show()
 
 
 def plot_tiff(file_path, gdf):
     with rasterio.open(file_path) as src:
-        num_bands = src.count
-        print(f"O arquivo TIFF possui {num_bands} bandas.")
-
-        # Leia a primeira banda
         band1 = src.read(1)
-
-        # Obtenha o CRS do GeoTIFF
         tiff_crs = src.crs
-        print(f"CRS do TIFF: {tiff_crs}")
 
-        # Verifique se o GeoDataFrame está no mesmo CRS do TIFF (EPSG:32722)
         if gdf.crs != tiff_crs:
-            print("Reprojecionando GeoDataFrame para CRS do TIFF...")
             gdf = gdf.to_crs(tiff_crs)
 
-        # Mascarar valores iguais a 255
         masked_band1 = np.ma.masked_equal(band1, 255)
-
-        # Configura a figura e o eixo
         fig, ax = plt.subplots(figsize=(10, 10))
-
-        # Obter a extensão do raster
         raster_extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]
-
-        # Exiba a imagem com uma paleta de cores diferente e valores 255 mascarados
-        im = ax.imshow(masked_band1, cmap='viridis', extent=raster_extent)  # Usar extent para alinhar corretamente
-
-        # Converter as coordenadas do GeoDataFrame para o sistema de coordenadas do raster
+        im = ax.imshow(masked_band1, cmap='viridis', extent=raster_extent)
         if gdf.crs != tiff_crs:
-            proj_in = Proj(gdf.crs)
             proj_out = Proj(tiff_crs)
             gdf['geometry'] = gdf['geometry'].to_crs(proj_out)
 
-        # Plote o GeoDataFrame no eixo
         gdf.plot(ax=ax, facecolor='none', edgecolor='red')
-
-        # Adicione uma barra de cores
-        cbar = plt.colorbar(im, ax=ax, label='Valores de pixel')
-
-        # Adicione título e rótulos
-        plt.title('Imagem GeoTIFF com Valores 255 Mascarados')
-        plt.xlabel('X')
-        plt.ylabel('Y')
-
-        # Exiba a plotagem
+        cbar = plt.colorbar(im, ax=ax, label='Canopy Height Prediction')
+        plt.title('Canopy Height')
+        plt.axis('off')
         plt.show()
 
 
 def normalize_band(band, max_value):
-    # Excluir valores 255
     mask = band != 255
     valid_pixels = band[mask]
-
-    # Normalizar os valores dos pixels
     max_pixel_value = valid_pixels.max()
-
     normalized_pixels = (valid_pixels / max_pixel_value) * max_value
-
-    # Criar uma cópia da banda original
     new_band = band.copy()
-
-    # Aplicar os valores normalizados aos pixels válidos
     new_band[mask] = normalized_pixels
-
     return new_band
 
 
 def create_normalized_tiff(input_file, output_file, max_value=20):
-    # Abra o arquivo GeoTIFF original
     with rasterio.open(input_file) as src:
-        # Leia a primeira banda
         band1 = src.read(1)
-
-        # Normalize os valores da banda
         normalized_band = normalize_band(band1, max_value=max_value)
-
-        # Crie um novo arquivo GeoTIFF com os valores normalizados
         profile = src.profile
         with rasterio.open(output_file, 'w', **profile) as dst:
             dst.write(normalized_band, 1)
 
 
+def plot_rgb(directory, output_file):
+    granule_dir = os.path.join(directory, 'GRANULE')
+    subdir = next(os.walk(granule_dir))[1][0]
+    subdir_path = os.path.join(granule_dir, subdir)
+    img_data_dir = os.path.join(subdir_path, 'IMG_DATA', 'R10m')
+    files = os.listdir(img_data_dir)
+    b2_file = next(f for f in files if 'B02_10m.jp2' in f)
+    b3_file = next(f for f in files if 'B03_10m.jp2' in f)
+    b4_file = next(f for f in files if 'B04_10m.jp2' in f)
+    b2_path = os.path.join(img_data_dir, b2_file)
+    b3_path = os.path.join(img_data_dir, b3_file)
+    b4_path = os.path.join(img_data_dir, b4_file)
+    with rasterio.open(b2_path) as b2, rasterio.open(b3_path) as b3, rasterio.open(b4_path) as b4:
+        b2_data = b2.read(1)
+        b3_data = b3.read(1)
+        b4_data = b4.read(1)
 
-def main(car):
-    api_root = 'https://api.scicrop.com.br'
-    api_token = config('TOKEN')
-    copernicus_dataspace_login = config('COPERNICUS_DATASPACE_LOGIN')
-    copernicus_dataspace_passwd = config('COPERNICUS_DATASPACE_PASSWD')
-    end_date = datetime.today().date()
-    start_date = end_date - timedelta(days=6 * 30)
-    end_date_str = end_date.strftime("%Y-%m-%d")
-    start_date_str = start_date.strftime("%Y-%m-%d")
-    print("start_date:", start_date_str)
-    print("end_date:", end_date_str)
-    output_path = '../deploy_example/sentinel2/'
+        rgb = np.stack((b4_data, b3_data, b2_data), axis=-1)
 
-    json_data = car_to_geojson(car, api_root, api_token)
-    geometry = shape(json_data)
-    with open('/tmp/aoi.json', 'w') as f:
-        json.dump(json_data, f, indent=4)
-    wkt = geojson_to_wkt_bbox(json_data)
-    json_data = get_available_sentinel_products(wkt, start_date_str, end_date_str)
+        profile = b2.profile
+        profile.update(count=3)
 
-    if json_data is not None and len(json_data['value']) > 0:
-        tile = json_data['value'][0]['Name'].split('_T')[1].split('_')[0]
-        print(tile)
-        for item in json_data['value']:
-            image_path = output_path + json_data['value'][0]['Name'] + ".zip"
-            print(f"Starting to download file {json_data['value'][0]['Name']} at {image_path}.")
-            file_path = Path(image_path)
-            dir_path = Path(output_path+json_data['value'][0]['Name'])
-            '''
-            if not dir_path.is_dir() or not file_path.is_file():
-                download_sentinel_product(json_data['value'][0]['Id'], copernicus_dataspace_login, copernicus_dataspace_passwd, image_path)
-                unzip_file(image_path, output_path)
-            else:
-                print('Product already downloaded.')
-            '''
-            run_canopy_prediction(image_path)
-        run_merge_predictions(tile)
-
-        merged_predictions_file_path = '../deploy_example/predictions_merge/preds_inv_var_mean/' + tile + '_pred.tif'
-
-        gdf = gpd.GeoDataFrame([{'geometry': geometry}], crs="EPSG:4326")
-
-        plot_tiff(merged_predictions_file_path, gdf)
-        plot_pixel_distribution(merged_predictions_file_path)
-        output_file = '/tmp/arquivo_normalizado.tif'
-        create_normalized_tiff(merged_predictions_file_path, output_file)
-        plot_tiff(output_file, gdf)
-        plot_pixel_distribution(output_file)
+        with rasterio.open(output_file, 'w', **profile) as dst:
+            dst.write(rgb[:, :, 0], 1)
+            dst.write(rgb[:, :, 1], 2)
+            dst.write(rgb[:, :, 2], 3)
 
 
+def main(car, aoi, only_prepare):
+    check_env()
+    if only_prepare:
+        prepare(False)
     else:
-        print("No sentinel products found for this period/aoi/cloud cover.")
+        prepare(False)
+        api_root = 'https://api.scicrop.com.br'
+        api_token = config('TOKEN')
+        copernicus_dataspace_login = config('COPERNICUS_DATASPACE_LOGIN')
+        copernicus_dataspace_passwd = config('COPERNICUS_DATASPACE_PASSWD')
+        end_date = datetime.today().date()
+        start_date = end_date - timedelta(days=6 * 30)
+        end_date_str = end_date.strftime("%Y-%m-%d")
+        start_date_str = start_date.strftime("%Y-%m-%d")
+        print("start_date:", start_date_str)
+        print("end_date:", end_date_str)
+        output_path = '../deploy_example/sentinel2/'
+        json_data = None
+        if car:
+            json_data = car_to_geojson(car, api_root, api_token)
+        else:
+            with open(aoi, 'r') as file:
+                json_data = json.load(file)
+        geometry = shape(json_data)
+        wkt = geojson_to_bbox(json_data)
+        json_data = get_available_sentinel_products(wkt, start_date_str, end_date_str)
+        dir_path = ''
+        if json_data is not None and len(json_data['value']) > 0:
+            tile = json_data['value'][0]['Name'].split('_T')[1].split('_')[0]
+            print(tile)
+            for item in json_data['value']:
+                image_path = output_path + json_data['value'][0]['Name'] + ".zip"
+                print(f"Starting to download file {json_data['value'][0]['Name']} at {image_path}.")
+                file_path = Path(image_path)
+                dir_path = Path(output_path+json_data['value'][0]['Name'])
+
+                if not dir_path.is_dir() or not file_path.is_file():
+                    download_sentinel_product(json_data['value'][0]['Id'], copernicus_dataspace_login, copernicus_dataspace_passwd, image_path)
+                    unzip_file(image_path, output_path)
+                else:
+                    print('Product already downloaded.')
+
+                run_canopy_prediction(image_path)
+            run_merge_predictions(tile)
+            rgb_file_name = f'{tile}_rgb.tif'
+            merged_predictions_file_name = f'{tile}_pred.tif'
+            normalized_predictions_file_name = f'{tile}_norm.tif'
+            merged_predictions_file_path = f'../deploy_example/predictions_merge/preds_inv_var_mean/{merged_predictions_file_name}'
+            rgb_file_path = merged_predictions_file_path+rgb_file_name
+            plot_rgb(dir_path, rgb_file_path)
+            gdf = gpd.GeoDataFrame([{'geometry': geometry}], crs="EPSG:4326")
+            plot_tiff_rgb(rgb_file_path, gdf)
+            #plot_tiff(merged_predictions_file_path, gdf)
+            #plot_pixel_distribution(merged_predictions_file_patobh)
+            normalized_predictions_file_path = merged_predictions_file_path + normalized_predictions_file_name
+            create_normalized_tiff(merged_predictions_file_path, normalized_predictions_file_path)
+            plot_tiff(normalized_predictions_file_path, gdf)
+            plot_pixel_distribution(normalized_predictions_file_path)
+
+        else:
+            print("No sentinel products found for this period/aoi/cloud cover.")
+
+
+def is_valid_geojson(file_path):
+    geojson_schema = {
+        "type": "object",
+        "required": ["type", "features"],
+        "properties": {
+            "type": {"type": "string"},
+            "features": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["type", "geometry", "properties"],
+                    "properties": {
+                        "type": {"type": "string"},
+                        "geometry": {"type": "object"},
+                        "properties": {"type": "object"}
+                    }
+                }
+            }
+        }
+    }
+
+    try:
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+            validate(instance=data, schema=geojson_schema)
+    except (json.JSONDecodeError, ValidationError):
+        return False
+    return True
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process Sentinel-2 images and predict Canopy height.')
-    parser.add_argument('--car', required=True, help='CAR code of the property')
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--car', help='Brazilian CAR code of the property')
+    group.add_argument('--aoi', help='Path to the AOI geojson file')
+    group.add_argument('--prepare', help='Only get model and prepare folders')
+
     args = parser.parse_args()
-    main(args.car)
+
+    if args.aoi:
+        if not os.path.isfile(args.aoi):
+            print("Error: AOI file does not exists.")
+            sys.exit(1)
+        if not is_valid_geojson(args.aoi):
+            print("Error: AOI is an invalid geojson file.")
+            sys.exit(1)
+    if args.aoi or args.car or args.prepare:
+        main(args.car, args.aoi, args.prepare)
+    else:
+        print("No --car or --aoi was informed.")
+        sys.exit(1)
