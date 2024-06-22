@@ -18,6 +18,10 @@ Here we present two ways how to install the packages.
 10. Install this project as an editable package called `gchm`. Make sure you are in the directory of the repository containing the file `setup.py` . 
   Run: `python3 -m pip install -e .` (Note the dot `.` at the end.)
 
+### Credentials for SciCrop API
+Optional. Contact info@scicrop.com to request access to automate Brazilian CAR analysis.
+
+
 ### Credentials for wandb
 Optional. Only needed to run the training code (Not needed for deployment).
 Create a file called `~/.config_wandb` containing your [weights and biases API key](https://docs.wandb.ai/quickstart): 
