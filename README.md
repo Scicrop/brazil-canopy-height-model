@@ -44,47 +44,22 @@ Please see the [example notebook](gchm/notebooks/example_loading_pretrained_mode
 
 This is a demo how to run the trained ensemble to compute the canopy height map for a Sentinel-2 tile (approx. 100 km x 100 km).
 
-### Preparation:
-1. Download the demo data which contains Sentinel-2 images for one tile: 
+### Running:
+1. With Brazilian CAR code: 
     ```
-    bash gchm/bash/download_demo_data.sh ./
+    cd gchm
+    python3 app.py --car {car-code}
     ```
-   This creates the following directory:
+2. With Geojson:
     ```
-    deploy_example/
-    ├── ESAworldcover
-    │   └── 2020
-    │       └── sentinel2_tiles
-    │           └── ESA_WorldCover_10m_2020_v100_32TMT.tif
-    ├── image_paths
-    │   └── 2020
-    │       └── 32TMT.txt
-    ├── image_paths_logs
-    │   └── 2020
-    ├── predictions_provided
-    │   ├── 2020
-    │   │   ├── S2A_MSIL2A_20200623T103031_N0214_R108_T32TMT_20200623T142851_predictions.tif
-    │   │   ├── S2A_MSIL2A_20200623T103031_N0214_R108_T32TMT_20200623T142851_std.tif
-    │   │   ├── ...
-    │   ├── 2020_merge
-    │   │   └── preds_inv_var_mean
-    │   │       ├── 32TMT_pred.tif
-    │   │       └── 32TMT_std.tif
-    │   └── 2020_merge_logs
-    │       └── preds_inv_var_mean
-    │           └── 32TMT.txt
-    ├── sentinel2
-    │   └── 2020
-    │       ├── S2A_MSIL2A_20200623T103031_N0214_R108_T32TMT_20200623T142851.zip
-    │       ├── ...
-    └── sentinel2_aws
-        └── 2020
+    cd gchm
+    python3 app.py --aoi {geojson path}
     ```
-2. Download the trained model weights:
+3. Just preparation:
+   ```
+    cd gchm
+    python3 app.py --prepare
     ```
-    bash gchm/bash/download_trained_models.sh ./trained_models
-    ```
-   
     This creates the following directory:
     
     ```
