@@ -90,12 +90,6 @@ This is a demo how to run the trained ensemble to compute the canopy height map 
     ```
    The checkpoint.pt files contain the model weights. The subdirectories `FT_Lm_SRCB` contain the models finetuned with a re-weighted loss function.
             
-### Deploy example for a single Sentinel-2 image
-This [demo script](gchm/bash/deploy_example.sh) processes a single image (from the year 2020) for the tile "32TMT" in Switzerland. Run: 
-```
-bash gchm/bash/deploy_example.sh
-```
-
 ### Deploy and merge example for multiple images of a Sentinel-2 tile
 This [demo script](gchm/bash/run_tile_deploy_merge.sh) processes 10 images (from the year 2020) for the tile "32TMT" in Switzerland and aggregates the individual per-image maps to a final annual map.
 
