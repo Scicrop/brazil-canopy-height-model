@@ -171,7 +171,7 @@ python3 gchm/preprocess/ALS_maxpool_GEDI_footprint.py "path/to/input/tif" "path/
 
 ## Citation
 
-Please cite our paper if you use this code or any of the provided data.
+Please cite the first authors of the paper if you use this code or any of the provided data.
 
 Lang, N., Jetz, W., Schindler, K., & Wegner, J. D. (2023). A high-resolution canopy height model of the Earth. Nature Ecology & Evolution, 1-12.
 ```
