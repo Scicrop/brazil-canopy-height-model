@@ -60,9 +60,25 @@ This is a demo how to run the trained ensemble to compute the canopy height map 
     cd gchm
     python3 app.py --prepare
     ```
-    This creates the following directory:
-    
+    This creates the following directories:
+
     ```
+    deploy_example/
+    ├── ESAworldcover
+    │   └── 2020
+    │       └── sentinel2_tiles
+    │           └── ESA_WorldCover_10m_2020_v100_32TMT.tif
+    ├── image_paths
+    │   └── 2020
+    │       └── 32TMT.txt
+    ├── image_paths_logs
+    │   
+    ├── predictions_provided
+    │   
+    ├── sentinel2
+    │   
+    └── sentinel2_aws
+    
     trained_models/
     └── GLOBAL_GEDI_2019_2020
         ├── model_0
